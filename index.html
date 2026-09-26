@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Seamless Hexagonal Emitter Generator</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+
+    <style>
+        /* Custom scrollbar for the sidebar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #f1f5f9; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        
+        /* Canvas scaling and shadows */
+        #renderCanvas {
+            max-width: 100%;
+            max-height: calc(100vh - 4rem);
+            object-fit: contain;
+            box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+        }
+        
+        body { background-color: #e2e8f0; }
+        
+        /* Range slider customizations */
+        input[type=range] { accent-color: #2563eb; }
+    </style>
+</head>
+<body class="flex flex-col md:flex-row h-screen w-full font-sans overflow-hidden">
+
+    <aside class="w-full md:w-80 lg:w-96 bg-white h-full shadow-2xl z-10 flex flex-col flex-shrink-0 overflow-y-auto">
+        <div class="p-6 border-b border-gray-100">
+            <h1 class="text-2xl font-bold text-gray-800 tracking-tight">Hex Generator</h1>
+            <p class="text-sm text-gray-500 mt-1">Live Dual-Emitter Voronoi</p>
+        </div>
+
+        <div class="p-6 flex-1 flex flex-col gap-6">
+            <!-- Canvas Settings -->
+            <div>
+                <h3 class="text-xs uppercase font-bold text-gray-400 mb-3 tracking-wider">Canvas Settings</h3>
+                <div class="space-y-4">
+                    <div>
+                        <div class="flex justify-between mb-1">
+                            <label class="text-sm font-medium text-gray-700">Width (px)</label>
+                            <span class="text-sm text-blue-600 font-mono" id="val-width">1000</span>
+                        </div>
+                        <input type="range" id="width" min="500" max="2500" step="10" value="1000" class="w-full">
+                    </div>
+                    <div>
+                        <div class="flex justify-between mb-1">
+                            <label class="text-sm font-medium text-gray-700">Height (px)</label>
+                            <span class="text-sm text-blue-600 font-mono" id="val-height">1200</span>
+                        </div>
+                        <input type="range" id="height" min="500" max="2500" step="10" value="1200" class="w-full">
+                    </div>
+                </div>
+            </div>
+
+            <hr class="border-gray-100">
+
+            <!-- Emitter Configuration -->
+            <div>
+                <h3 class="text-xs uppercase font-bold text-gray-400 mb-3 tracking-wider">Emitter Geometry</h3>
+                <div class="space-y-4">
+                    <div>
+                        <div class="flex justify-between mb-1">
+                            <label class="text-sm font-medium text-gray-700">Disk Radius (px)</label>
+                            <span class="text-sm text-blue-600 font-mono" id="val-rDisk">60</span>
+                        </div>
+                        <input type="range" id="rDisk" min="20" max="300" step="1" value="60" class="w-full">
+                    </div>
+                    <div>
+                        <div class="flex justify-between mb-1">
+                            <label class="text-sm font-medium text-gray-700">Emitter 1 Pos (X% / Y%)</label>
+                            <span class="text-sm text-blue-600 font-mono"><span id="val-e1x">58</span>% / <span id="val-e1y">20</span>%</span>
+                        </div>
+                        <div class="flex gap-2">
+                            <input type="range" id="e1x" min="0" max="100" step="1" value="58" class="w-full">
+                            <input type="range" id="e1y" min="0" max="100" step="1" value="20" class="w-full">
+                        </div>
+                    </div>
+                    <div>
+                        <div class="flex justify-between mb-1">
+                            <label class="text-sm font-medium text-gray-700">Emitter 2 Pos (X% / Y%)</label>
+                            <span class="text-sm text-blue-600 font-mono"><span id="val-e2x">45</span>% / <span id="val-e2y">60</span>%</span>
+                        </div>
+                        <div class="flex gap-2">
+                            <input type="range" id="e2x" min="0" max="100" step="1" value="45" class="w-full">
+                            <input type="range" id="e2y" min="0" max="100" step="1" value="60" class="w-full">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <hr class="border-gray-100">
+
+            <!-- Hexagon Pattern Settings -->
+            <div>
+                <h3 class="text-xs uppercase font-bold text-gray-400 mb-3 tracking-wider">Hexagon Pattern</h3>
+                <div class="space-y-4">
+                    <div>
+                        <div class="flex justify-between mb-1">
+                            <label class="text-sm font-medium text-gray-700">Initial Cell Size (px)</label>
+                            <span class="text-sm text-blue-600 font-mono" id="val-base">15.0</span>
+                        </div>
+                        <input type="range" id="base" min="5" max="100" step="0.5" value="15.0" class="w-full">
+                    </div>
+                    <div>
+                        <div class="flex justify-between mb-1">
+                            <label class="text-sm font-medium text-gray-700">Growth Rate</label>
+                            <span class="text-sm text-blue-600 font-mono" id="val-growth">0.22</span>
+                        </div>
+                        <input type="range" id="growth" min="0.05" max="0.50" step="0.01" value="0.22" class="w-full">
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="p-6 border-t border-gray-100 bg-gray-50 flex flex-col gap-2 shrink-0">
+            <button id="downloadBtn" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-4 rounded-lg transition-colors flex justify-center items-center gap-2 shadow-sm">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                Download Image
+            </button>
+            <button id="shareBtn" class="w-full bg-white border border-gray-300 hover:bg-gray-100 text-gray-700 font-medium py-2.5 px-4 rounded-lg transition-colors flex justify-center items-center gap-2 text-sm">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                <span id="shareBtnText">Copy Shareable Link</span>
+            </button>
+        </div>
+    </aside>
+
+    <main class="flex-1 relative flex items-center justify-center p-4 md:p-8 bg-[url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyMCIgaGVpZ2h0PSIyMCI+PHJlY3Qgd2lkdGg9IjIwIiBoZWlnaHQ9IjIwIiBmaWxsPSIjZWFlY2YwIi8+PGNpcmNsZSBjeD0iMSIgY3k9IjEiIHI9IjEiIGZpbGw9IiNjYmQ1ZTEiLz48L3N2Zz4=')]">
+        
+        <!-- Loading Overlay -->
+        <div id="loadingOverlay" class="absolute inset-0 bg-slate-900/10 backdrop-blur-sm z-20 flex flex-col items-center justify-center transition-opacity duration-200 rounded-lg pointer-events-none opacity-0">
+            <div class="bg-white p-5 rounded-2xl shadow-xl flex flex-col items-center">
+                <div class="w-10 h-10 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin mb-3"></div>
+                <h2 class="text-md font-bold text-gray-800" id="loadingText">Updating Pattern...</h2>
+            </div>
+        </div>
+
+        <canvas id="renderCanvas" class="bg-white rounded-sm"></canvas>
+    </main>
+
+    <script>
+        const canvas = document.getElementById('renderCanvas');
+        const ctx = canvas.getContext('2d');
+        const loadingOverlay = document.getElementById('loadingOverlay');
+        const downloadBtn = document.getElementById('downloadBtn');
+        const shareBtn = document.getElementById('shareBtn');
+        const shareBtnText = document.getElementById('shareBtnText');
+
+        // Parameter Configuration Map (Internal key -> URL param key)
+        const paramMap = {
+            width: 'w',
+            height: 'h',
+            e1x: 'e1x', e1y: 'e1y',
+            e2x: 'e2x', e2y: 'e2y',
+            rDisk: 'r',
+            base: 'ib',
+            growth: 'gr'
+        };
+
+        // Default application state
+        const config = {
+            width: 1000, height: 1200,
+            e1x: 58, e1y: 20,
+            e2x: 45, e2y: 60,
+            rDisk: 60,
+            base: 15.0, // Initial cell size
+            growth: 0.22,
+            relaxSteps: 6, // Fixed mathematical parameter
+            lineWidth: 2
+        };
+
+        // Allow UI redraws during heavy tasks
+        const yieldToBrowser = () => new Promise(resolve => setTimeout(resolve, 0));
+
+        function syncUrlToConfig() {
+            try {
+                const params = new URLSearchParams(window.location.search);
+                for (const [key, urlKey] of Object.entries(paramMap)) {
+                    if (params.has(urlKey)) {
+                        const val = parseFloat(params.get(urlKey));
+                        if (!isNaN(val)) config[key] = val;
+                    }
+                }
+            } catch (err) {
+                // Silently handle environments where window.location is restricted
+                console.warn('URL params could not be read:', err);
+            }
+        }
+
+        function buildParamString() {
+            const params = new URLSearchParams();
+            for (const [key, urlKey] of Object.entries(paramMap)) {
+                params.set(urlKey, config[key]);
+            }
+            return params.toString();
+        }
+
+        function updateUrlFromConfig() {
+            try {
+                // If running in a blob: or restricted sandbox origin, replaceState will throw a SecurityError
+                if (window.location.protocol === 'blob:' || window.location.protocol === 'about:') {
+                    return;
+                }
+                const queryString = buildParamString();
+                const newUrl = `${window.location.pathname}?${queryString}`;
+                window.history.replaceState({}, '', newUrl);
+            } catch (err) {
+                // Gracefully ignore history state restrictions in embedded iframe sandboxes
+            }
+        }
+
+        // Initialize UI values to match config
+        function updateUiFromConfig() {
+            for (const key of Object.keys(paramMap)) {
+                const el = document.getElementById(key);
+                const valEl = document.getElementById(`val-${key}`);
+                if (el) el.value = config[key];
+                if (valEl) valEl.textContent = Number.isInteger(config[key]) ? config[key] : config[key].toFixed(2);
+            }
+        }
+
+        let debounceTimer;
+        let isGenerating = false;
+
+        function scheduleGeneration() {
+            // Show loading immediately
+            loadingOverlay.classList.remove('opacity-0');
+            loadingOverlay.classList.add('opacity-100');
+            
+            clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(() => {
+                generatePattern();
+            }, 250); // 250ms debounce
+        }
+
+        // Attach listeners to sliders
+        function attachSlider(id, isFloat = false) {
+            const el = document.getElementById(id);
+            const valEl = document.getElementById(`val-${id}`);
+            el.addEventListener('input', (e) => {
+                const val = isFloat ? parseFloat(e.target.value) : parseInt(e.target.value);
+                config[id] = val;
+                if (valEl) valEl.textContent = isFloat ? val.toFixed(id === 'growth' ? 2 : 1) : val;
+                
+                updateUrlFromConfig();
+                scheduleGeneration();
+            });
+        }
+
+        attachSlider('width'); attachSlider('height');
+        attachSlider('rDisk');
+        attachSlider('e1x'); attachSlider('e1y');
+        attachSlider('e2x'); attachSlider('e2y');
+        attachSlider('base', true);
+        attachSlider('growth', true);
+
+        function getTargetSpacing(px, py, centers) {
+            const d1 = Math.hypot(px - centers[0].x, py - centers[0].y);
+            const d2 = Math.hypot(px - centers[1].x, py - centers[1].y);
+            
+            // Softmin logic seamlessly blends target size fields between emitters
+            const k = 0.02;
+            const dSmooth = -(1.0 / k) * Math.log(Math.exp(-k * d1) + Math.exp(-k * d2) + 1e-12);
+            const dFromDisk = Math.max(0, dSmooth - config.rDisk);
+            return config.base + config.growth * dFromDisk;
+        }
+
+        // Clips line segment p1->p2 against circle(center, r)
+        function clipLineToCircle(p1, p2, center, r) {
+            const d1 = Math.hypot(p1[0] - center.x, p1[1] - center.y);
+            const d2 = Math.hypot(p2[0] - center.x, p2[1] - center.y);
+
+            if (d1 < r && d2 < r) return null; // Entire line inside
+
+            const dx = p2[0] - p1[0], dy = p2[1] - p1[1];
+            const fx = p1[0] - center.x, fy = p1[1] - center.y;
+
+            const a = dx*dx + dy*dy;
+            const b = 2 * (fx*dx + fy*dy);
+            const c = (fx*fx + fy*fy) - r*r;
+            let discriminant = b*b - 4*a*c;
+
+            if (discriminant < 0) return [p1, p2]; // No intersection, entire line outside
+
+            discriminant = Math.sqrt(discriminant);
+            const t1 = (-b - discriminant) / (2*a);
+            const t2 = (-b + discriminant) / (2*a);
+
+            const validT = [];
+            if (t1 >= 0 && t1 <= 1) validT.push(t1);
+            if (t2 >= 0 && t2 <= 1) validT.push(t2);
+
+            if (validT.length === 0) return [p1, p2]; // Intersection points exist, but outside line segment bounds
+
+            // Entire line crosses the circle (passing completely through)
+            if (validT.length === 2 && d1 >= r && d2 >= r) {
+                // Return two segments outside the circle, or just discard (simplest for this specific grid geometry)
+                return null; 
+            }
+
+            // Exactly one point of the segment is inside
+            const t = validT[0];
+            const pInt = [p1[0] + t*dx, p1[1] + t*dy];
+
+            return (d1 < r) ? [pInt, p2] : [p1, pInt];
+        }
+
+        function polygonCentroid(pts) {
+            let cx = 0, cy = 0, area = 0;
+            // D3 polygons return to the start vertex
+            for (let i = 0; i < pts.length - 1; i++) {
+                const x0 = pts[i][0], y0 = pts[i][1];
+                const x1 = pts[i+1][0], y1 = pts[i+1][1];
+                const a = x0*y1 - x1*y0;
+                area += a;
+                cx += (x0 + x1) * a;
+                cy += (y0 + y1) * a;
+            }
+            area *= 0.5;
+            if (Math.abs(area) < 1e-6) return [pts[0][0], pts[0][1]];
+            return [cx / (6 * area), cy / (6 * area)];
+        }
+
+        async function generatePattern() {
+            if (isGenerating) return; // Prevent concurrent overlapping executions
+            isGenerating = true;
+
+            try {
+                canvas.width = config.width;
+                canvas.height = config.height;
+
+                const centers = [
+                    { x: config.width * config.e1x / 100, y: config.height * config.e1y / 100 },
+                    { x: config.width * config.e2x / 100, y: config.height * config.e2y / 100 }
+                ];
+                
+                await yieldToBrowser();
+
+                // 1. Spawning Rings
+                let rawPoints = [];
+                const maxRadius = Math.hypot(config.width, config.height) * 1.2;
+
+                for (const center of centers) {
+                    let currentRadius = config.rDisk + config.base * 0.4;
+                    let phase = 0.0;
+                    
+                    while (currentRadius < maxRadius) {
+                        const targetSpacing = config.base + config.growth * (currentRadius - config.rDisk);
+                        
+                        // Enforce exactly 6-fold angular symmetry (multiple of 6 points)
+                        const hexUnits = Math.max(1, Math.round((2 * Math.PI * currentRadius / targetSpacing) / 6.0));
+                        const nPoints = hexUnits * 6;
+                        const actualSpacing = 2 * Math.PI * currentRadius / nPoints;
+                        
+                        for (let i = 0; i < nPoints; i++) {
+                            const angle = (2 * Math.PI * i / nPoints) + phase;
+                            const px = center.x + currentRadius * Math.cos(angle);
+                            const py = center.y + currentRadius * Math.sin(angle);
+                            if (px >= -200 && px <= config.width + 200 && py >= -200 && py <= config.height + 200) {
+                                rawPoints.push({ x: px, y: py, minD: 0 });
+                            }
+                        }
+                        // Ideal radial step for 1:1 equilateral aspect ratio
+                        const dr = (Math.sqrt(3) / 2.0) * actualSpacing;
+                        currentRadius += dr;
+                        phase += Math.PI / nPoints;
+                    }
+                }
+
+                await yieldToBrowser();
+
+                // 2. Collision Resolution & Merging
+                rawPoints.forEach(p => {
+                    p.minD = Math.min(
+                        Math.hypot(p.x - centers[0].x, p.y - centers[0].y),
+                        Math.hypot(p.x - centers[1].x, p.y - centers[1].y)
+                    );
+                });
+                rawPoints.sort((a, b) => a.minD - b.minD);
+
+                let points = [];
+                for (const p of rawPoints) {
+                    const spacing = getTargetSpacing(p.x, p.y, centers);
+                    let isTooClose = false;
+                    const startIdx = Math.max(0, points.length - 80);
+                    for (let i = points.length - 1; i >= startIdx; i--) {
+                        if (Math.hypot(p.x - points[i][0], p.y - points[i][1]) < spacing * 0.65) {
+                            isTooClose = true;
+                            break;
+                        }
+                    }
+                    if (!isTooClose) points.push([p.x, p.y]);
+                }
+
+                // Add bounding box to keep voronoi cells finite
+                const pad = 500;
+                const boundaryPoints = [];
+                for (let x = -pad; x <= config.width + pad; x += (config.width + 2*pad)/20) {
+                    boundaryPoints.push([x, -pad]);
+                    boundaryPoints.push([x, config.height + pad]);
+                }
+                for (let y = -pad; y <= config.height + pad; y += (config.height + 2*pad)/20) {
+                    boundaryPoints.push([-pad, y]);
+                    boundaryPoints.push([config.width + pad, y]);
+                }
+
+                const isFixed = points.map(p => {
+                    const d1 = Math.hypot(p[0] - centers[0].x, p[1] - centers[0].y);
+                    const d2 = Math.hypot(p[1] - centers[1].x, p[1] - centers[1].y);
+                    return (d1 < config.rDisk + config.base * 0.8 || d2 < config.rDisk + config.base * 0.8);
+                });
+
+                const bounds = [-pad, -pad, config.width + pad, config.height + pad];
+                
+                for (let step = 0; step < config.relaxSteps; step++) {
+                    await yieldToBrowser(); // Keep UI unblocked
+                    const delaunay = d3.Delaunay.from(points.concat(boundaryPoints));
+                    const voronoi = delaunay.voronoi(bounds);
+                    
+                    const newPoints = [];
+                    for (let i = 0; i < points.length; i++) {
+                        if (isFixed[i]) {
+                            newPoints.push(points[i]);
+                            continue;
+                        }
+                        const cell = voronoi.cellPolygon(i);
+                        if (!cell || cell.length === 0) {
+                            newPoints.push(points[i]);
+                            continue;
+                        }
+                        const centroid = polygonCentroid(cell);
+                        // Low dampening factor to retain structural grid stability
+                        newPoints.push([
+                            points[i][0] + 0.25 * (centroid[0] - points[i][0]),
+                            points[i][1] + 0.25 * (centroid[1] - points[i][1])
+                        ]);
+                    }
+                    points = newPoints;
+                }
+
+                await yieldToBrowser();
+                const allPts = points.concat(boundaryPoints);
+                const delaunay = d3.Delaunay.from(allPts);
+                const voronoi = delaunay.voronoi(bounds);
+                const uniqueEdges = new Set();
+                const lines = [];
+
+                for (let i = 0; i < allPts.length; i++) {
+                    const cell = voronoi.cellPolygon(i);
+                    if (!cell) continue;
+                    for (let j = 0; j < cell.length - 1; j++) {
+                        const p1 = cell[j], p2 = cell[j + 1];
+                        const x1 = Math.round(p1[0]*10)/10, y1 = Math.round(p1[1]*10)/10;
+                        const x2 = Math.round(p2[0]*10)/10, y2 = Math.round(p2[1]*10)/10;
+                        const key = x1 < x2 || (x1 === x2 && y1 < y2) ? `${x1},${y1}-${x2},${y2}` : `${x2},${y2}-${x1},${y1}`;
+
+                        if (!uniqueEdges.has(key)) {
+                            uniqueEdges.add(key);
+                            lines.push([p1, p2]);
+                        }
+                    }
+                }
+
+                // Execute render commands
+                ctx.fillStyle = "#ffffff";
+                ctx.fillRect(0, 0, config.width, config.height);
+                ctx.lineWidth = config.lineWidth;
+                ctx.strokeStyle = "#000000";
+                ctx.lineCap = "round";
+                ctx.lineJoin = "round";
+
+                ctx.beginPath();
+                for (const line of lines) {
+                    let [p1, p2] = line;
+                    let res = clipLineToCircle(p1, p2, centers[0], config.rDisk);
+                    if (!res) continue;
+                    p1 = res[0]; p2 = res[1];
+
+                    res = clipLineToCircle(p1, p2, centers[1], config.rDisk);
+                    if (!res) continue;
+                    p1 = res[0]; p2 = res[1];
+
+                    ctx.moveTo(p1[0], p1[1]);
+                    ctx.lineTo(p2[0], p2[1]);
+                }
+                ctx.stroke();
+
+                for (const center of centers) {
+                    ctx.beginPath();
+                    ctx.arc(center.x, center.y, config.rDisk, 0, 2 * Math.PI);
+                    ctx.stroke();
+                }
+
+            } finally {
+                // Clear loading state
+                loadingOverlay.classList.remove('opacity-100');
+                loadingOverlay.classList.add('opacity-0');
+                isGenerating = false;
+            }
+        }
+
+        downloadBtn.addEventListener('click', () => {
+            const link = document.createElement('a');
+            link.download = `Hex-Pattern-${config.width}x${config.height}.png`;
+            link.href = canvas.toDataURL("image/png");
+            link.click();
+        });
+
+        shareBtn.addEventListener('click', () => {
+            const queryString = buildParamString();
+            const shareUrl = `${window.location.href.split('?')[0]}?${queryString}`;
+            
+            // Use textarea + execCommand to ensure compatibility within sandboxed iframes
+            const tempInput = document.createElement('textarea');
+            tempInput.value = shareUrl;
+            tempInput.style.position = 'fixed';
+            tempInput.style.opacity = '0';
+            document.body.appendChild(tempInput);
+            tempInput.select();
+            
+            try {
+                document.execCommand('copy');
+                shareBtnText.textContent = 'Copied to Clipboard!';
+            } catch (e) {
+                shareBtnText.textContent = 'Copy failed';
+            }
+            
+            document.body.removeChild(tempInput);
+
+            setTimeout(() => {
+                shareBtnText.textContent = 'Copy Shareable Link';
+            }, 2000);
+        });
+
+        // Parse URL, setup UI, trigger first render
+        window.addEventListener('DOMContentLoaded', () => {
+            syncUrlToConfig();
+            updateUiFromConfig();
+            updateUrlFromConfig();
+            // Give font and layout time to render before math kicks in
+            setTimeout(() => { scheduleGeneration(); }, 50); 
+        });
+
+    </script>
+</body>
+</html>
