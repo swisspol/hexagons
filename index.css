@@ -147,14 +147,6 @@ button {
 
 button:hover { background: #f3f4f6; }
 
-button.primary {
-    background: #111;
-    border-color: #111;
-    color: #fff;
-}
-
-button.primary:hover { background: #333; }
-
 /* Canvas area */
 .stage {
     flex: 1;
