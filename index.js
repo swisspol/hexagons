@@ -293,17 +293,57 @@ function updateUrl() {
     }
 }
 
-// Export from an offscreen canvas so the PNG never includes the background.
+function saveBlob(blob, ext) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `hexagons-${config.width}x${config.height}.${ext}`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+// Vector version of drawPattern (without the background image).
+function buildSvg(t) {
+    const { width, height, line } = config;
+    const f = v => +v.toFixed(2);
+    const circle = c =>
+        `M${f(c.x + t.radius)} ${f(c.y)}` +
+        `A${f(t.radius)} ${f(t.radius)} 0 1 0 ${f(c.x - t.radius)} ${f(c.y)}` +
+        `A${f(t.radius)} ${f(t.radius)} 0 1 0 ${f(c.x + t.radius)} ${f(c.y)}Z`;
+    const disks = circle(t.c1) + circle(t.c2);
+
+    // Skip segments that lie entirely on one side outside the canvas.
+    const parts = [];
+    const seg = t.segments;
+    for (let i = 0; i < seg.length; i += 2) {
+        const [x1, y1] = seg[i], [x2, y2] = seg[i + 1];
+        if ((x1 < 0 && x2 < 0) || (y1 < 0 && y2 < 0) ||
+            (x1 > width && x2 > width) || (y1 > height && y2 > height)) continue;
+        parts.push(`M${f(x1)} ${f(y1)}L${f(x2)} ${f(y2)}`);
+    }
+
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+<defs><clipPath id="outside-disks"><path clip-rule="evenodd" d="M0 0H${width}V${height}H0Z${disks}"/></clipPath></defs>
+<rect width="${width}" height="${height}" fill="#ffffff"/>
+<g fill="none" stroke="#000000" stroke-width="${line}" stroke-linecap="round" stroke-linejoin="round">
+<path clip-path="url(#outside-disks)" d="${parts.join('')}"/>
+<path d="${disks}"/>
+</g>
+</svg>
+`;
+}
+
+// Exports never include the background image. The PNG is drawn on an
+// offscreen canvas, which also avoids canvas tainting under file://.
 document.getElementById('downloadBtn').addEventListener('click', () => {
     const out = document.createElement('canvas');
     drawPattern(out, buildTiling(config), false);
-    out.toBlob(blob => {
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = `hexagons-${config.width}x${config.height}.png`;
-        a.click();
-        setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-    }, 'image/png');
+    out.toBlob(blob => saveBlob(blob, 'png'), 'image/png');
+});
+
+document.getElementById('svgBtn').addEventListener('click', () => {
+    const svg = buildSvg(buildTiling(config));
+    saveBlob(new Blob([svg], { type: 'image/svg+xml' }), 'svg');
 });
 
 document.getElementById('shareBtn').addEventListener('click', async (e) => {
