@@ -34,6 +34,12 @@ const PARAMS = [
     { key: 'line',   url: 'lw',  label: 'Line width',       unit: 'px', group: 'pattern',  min: 0.5, max: 10,   step: 0.5, def: 2 },
     { key: 'overlay', url: 'od', label: 'Size',            unit: 'px', group: 'disks',    min: 0,   max: 500,  step: 1,   def: 40 },
     { key: 'discBorder', url: 'db', label: 'Draw border',               group: 'disks',    min: 0,   max: 1,    step: 1,   def: 0,    type: 'checkbox' },
+    { key: 'colorize', url: 'col', label: 'Colorize',                   group: 'coloring', min: 0,   max: 1,    step: 1,   def: 0,    type: 'checkbox' },
+    { key: 'color1', url: 'c1',  label: 'Disc 1 color',                 group: 'coloring', def: '#8ee06a', type: 'color' },
+    { key: 'colorMid', url: 'cm', label: 'Mid-point color',             group: 'coloring', def: '#e8542a', type: 'color' },
+    { key: 'color2', url: 'c2',  label: 'Disc 2 color',                 group: 'coloring', def: '#6a4fc0', type: 'color' },
+    { key: 'dotStart', url: 'dss', label: 'Dot start size', unit: '%',  group: 'coloring', min: 0,   max: 100,  step: 1,   def: 50 },
+    { key: 'dotEnd',   url: 'dse', label: 'Dot end size',   unit: '%',  group: 'coloring', min: 0,   max: 100,  step: 1,   def: 50 },
     { key: 'bgOpacity', url: 'bg', label: 'Image opacity',  unit: '%',  group: 'background', min: 0, max: 100, step: 1,   def: 30 },
 ];
 
@@ -137,6 +143,7 @@ function buildTiling(p) {
     // Cell centres at (k·h, j·s + offset). w = 0 (the point at infinity) is a
     // cell centre, so no mapped edge ever passes through infinity.
     const segments = [];
+    const dots = [];
     for (let k = kMin; k <= kMax; k++) {
         const cr = k * h;
         const offset = (k & 1) ? s / 2 : 0;
@@ -147,11 +154,19 @@ function buildTiling(p) {
             const ci = j * s + offset;
             const pts = V.map(([vr, vi]) => toPlane(cr + vr, ci + vi));
             for (const [a, b] of edges) segments.push(pts[a], pts[b]);
+
+            // A dot at the cell centre, sized from the cell's inradius
+            // (√3/2 × mean centre-to-vertex distance). Its colour position
+            // runs from 0 on disk 1 through 0.5 halfway (the rings furthest
+            // from both emitters) to 1 on disk 2.
+            const [x, y] = toPlane(cr, ci);
+            const circum = pts.reduce((sum, [px, py]) => sum + Math.hypot(px - x, py - y), 0) / 6;
+            dots.push({ x, y, r: circum * SQRT3 / 2, t: Math.min(1, Math.max(0, (cr + rho0) / (2 * rho0))) });
         }
     }
 
     return {
-        c1, c2, f1, f2, radius, segments, warning,
+        c1, c2, f1, f2, radius, segments, dots, warning,
         stats: {
             cellsPerRing: N,
             rings: K + 1,
@@ -195,17 +210,60 @@ function drawPattern(target, t, withBackground) {
     }
     ctx.stroke();
 
+    for (const d of visibleDots(t)) {
+        ctx.beginPath();
+        ctx.arc(d.x, d.y, d.r, 0, TAU);
+        ctx.fillStyle = d.color;
+        ctx.fill();
+    }
+
     // Overlay discs: plain white (no outline), sized independently of the
     // emitters and aligned with the rings of cells, painted on top.
     const discs = overlayDiscs(t, config.overlay);
-    if (!discs.length) return;
-    ctx.beginPath();
-    for (const d of discs) {
-        ctx.moveTo(d.x + d.r, d.y);
+    discs.forEach((d, i) => {
+        ctx.beginPath();
         ctx.arc(d.x, d.y, d.r, 0, TAU);
+        ctx.fillStyle = discColor(i);
+        ctx.fill();
+        if (config.discBorder) ctx.stroke();
+    });
+}
+
+// Dots scaled by the dot size, coloured along the gradient, and limited to
+// those that are visible (on the canvas and at least a fraction of a pixel).
+// The size, relative to the cell, goes from the start size at the emitter
+// disks (small cells) to the end size halfway between them (large cells).
+function visibleDots(t) {
+    const { width, height, dotStart, dotEnd } = config;
+    if (!config.colorize || (dotStart <= 0 && dotEnd <= 0)) return [];
+    const out = [];
+    for (const d of t.dots) {
+        const nearEmitter = Math.abs(d.t - 0.5) * 2;
+        const r = d.r * (dotEnd + (dotStart - dotEnd) * nearEmitter) / 100;
+        if (r < 0.3 || d.x < -r || d.y < -r || d.x > width + r || d.y > height + r) continue;
+        out.push({ x: d.x, y: d.y, r, color: gradientColor(d.t) });
     }
-    ctx.fill();
-    if (config.discBorder) ctx.stroke();
+    return out;
+}
+
+// Overlay disc i is plain white unless coloring is enabled.
+function discColor(i) {
+    return config.colorize ? [config.color1, config.color2][i] : '#ffffff';
+}
+
+// Colour at position t ∈ [0, 1]: disc 1 colour → mid-point colour → disc 2
+// colour, interpolated linearly in RGB.
+function gradientColor(t) {
+    const [a, b, u] = t < 0.5
+        ? [config.color1, config.colorMid, t * 2]
+        : [config.colorMid, config.color2, t * 2 - 1];
+    const ca = parseInt(a.slice(1), 16), cb = parseInt(b.slice(1), 16);
+    let hex = '#';
+    for (const shift of [16, 8, 0]) {
+        const va = (ca >> shift) & 255, vb = (cb >> shift) & 255;
+        hex += Math.round(va + (vb - va) * u).toString(16).padStart(2, '0');
+    }
+    return hex;
 }
 
 // The rings of cells around an emitter are circles of the bipolar system
@@ -279,6 +337,20 @@ function buildControls() {
     for (const p of PARAMS) {
         const field = document.createElement('div');
 
+        if (p.type === 'color') {
+            field.className = 'field color';
+            field.innerHTML = `<label><input type="color" id="color-${p.key}"> ${p.label}</label>`;
+            document.querySelector(`[data-group="${p.group}"]`).appendChild(field);
+            const picker = field.querySelector('input');
+            picker.value = config[p.key];
+            picker.addEventListener('input', () => {
+                config[p.key] = picker.value;
+                updateUrl();
+                scheduleRender();
+            });
+            continue;
+        }
+
         // Booleans are stored as 1 / 0 so the URL and clamping code apply.
         if (p.type === 'checkbox') {
             field.className = 'field checkbox';
@@ -329,13 +401,20 @@ function buildControls() {
 function readUrl() {
     const params = new URLSearchParams(window.location.search);
     for (const p of PARAMS) {
-        const v = parseFloat(params.get(p.url));
+        const raw = params.get(p.url);
+        if (p.type === 'color') {
+            // Colours are stored without the '#', e.g. c1=8ee06a.
+            if (/^[0-9a-f]{6}$/i.test(raw || '')) config[p.key] = '#' + raw.toLowerCase();
+            continue;
+        }
+        const v = parseFloat(raw);
         if (!isNaN(v)) config[p.key] = clamp(p, v);
     }
 }
 
 function paramString() {
-    return new URLSearchParams(PARAMS.map(p => [p.url, config[p.key]])).toString();
+    return new URLSearchParams(PARAMS.map(p =>
+        [p.url, p.type === 'color' ? config[p.key].slice(1) : config[p.key]])).toString();
 }
 
 function updateUrl() {
@@ -358,11 +437,11 @@ function saveBlob(blob, ext) {
 function buildSvg(t) {
     const { width, height, line } = config;
     const f = v => +v.toFixed(2);
-    const discs = overlayDiscs(t, config.overlay);
-    const disks = discs.map(d =>
-        `M${f(d.x + d.r)} ${f(d.y)}` +
-        `A${d.r} ${d.r} 0 1 0 ${f(d.x - d.r)} ${f(d.y)}` +
-        `A${d.r} ${d.r} 0 1 0 ${f(d.x + d.r)} ${f(d.y)}Z`).join('');
+    const dots = visibleDots(t).map(d =>
+        `<circle cx="${f(d.x)}" cy="${f(d.y)}" r="${f(d.r)}" fill="${d.color}"/>\n`).join('');
+    const border = config.discBorder ? ` stroke="#000000" stroke-width="${line}"` : '';
+    const disks = overlayDiscs(t, config.overlay).map((d, i) =>
+        `<circle cx="${f(d.x)}" cy="${f(d.y)}" r="${d.r}" fill="${discColor(i)}"${border}/>\n`).join('');
 
     // Skip segments that lie entirely on one side outside the canvas.
     const parts = [];
@@ -380,7 +459,7 @@ function buildSvg(t) {
 <g fill="none" stroke="#000000" stroke-width="${line}" stroke-linecap="round" stroke-linejoin="round">
 <path d="${parts.join('')}"/>
 </g>
-${disks ? `<path fill="#ffffff"${config.discBorder ? ` stroke="#000000" stroke-width="${line}"` : ''} d="${disks}"/>\n` : ''}
+${dots}${disks}
 </svg>
 `;
 }
