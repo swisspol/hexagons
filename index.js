@@ -32,7 +32,13 @@ const PARAMS = [
     { key: 'radius', url: 'r',   label: 'Disk radius',      unit: 'px', group: 'emitters', min: 1,   max: 500,  step: 1,   def: 40 },
     { key: 'growth', url: 'g',   label: 'Growth per ring',  unit: '%',  group: 'pattern',  min: 2,   max: 60,   step: 0.5, def: 20 },
     { key: 'line',   url: 'lw',  label: 'Line width',       unit: 'px', group: 'pattern',  min: 0.5, max: 10,   step: 0.5, def: 2 },
+    { key: 'bgOpacity', url: 'bg', label: 'Image opacity',  unit: '%',  group: 'background', min: 0, max: 100, step: 1,   def: 30 },
 ];
+
+// Background image, scaled to fit the canvas without distortion.
+const background = new Image();
+background.addEventListener('load', () => scheduleRender());
+background.src = 'audi_r8.png';
 
 const config = Object.fromEntries(PARAMS.map(p => [p.key, p.def]));
 
@@ -147,6 +153,7 @@ function render() {
 
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, width, height);
+    drawBackground(width, height);
     ctx.strokeStyle = '#000000';
     ctx.lineWidth = line;
     ctx.lineCap = 'round';
@@ -179,6 +186,17 @@ function render() {
     ctx.stroke();
 
     renderStats(t);
+}
+
+function drawBackground(width, height) {
+    if (!background.complete || !background.naturalWidth || config.bgOpacity <= 0) return;
+    const scale = Math.min(width / background.naturalWidth, height / background.naturalHeight);
+    const w = background.naturalWidth * scale;
+    const h = background.naturalHeight * scale;
+    ctx.save();
+    ctx.globalAlpha = config.bgOpacity / 100;
+    ctx.drawImage(background, (width - w) / 2, (height - h) / 2, w, h);
+    ctx.restore();
 }
 
 function renderStats(t) {
@@ -271,14 +289,22 @@ function updateUrl() {
     }
 }
 
-document.getElementById('downloadBtn').addEventListener('click', () => {
-    canvas.toBlob(blob => {
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = `hexagons-${config.width}x${config.height}.png`;
-        a.click();
-        setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-    }, 'image/png');
+document.getElementById('downloadBtn').addEventListener('click', (e) => {
+    const btn = e.currentTarget;
+    try {
+        canvas.toBlob(blob => {
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = `hexagons-${config.width}x${config.height}.png`;
+            a.click();
+            setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+        }, 'image/png');
+    } catch {
+        // Browsers taint the canvas when the background image is loaded from
+        // file://, which blocks export. Serving the folder over http fixes it.
+        btn.textContent = 'Export blocked: serve over http';
+        setTimeout(() => { btn.textContent = 'Download PNG'; }, 3000);
+    }
 });
 
 document.getElementById('shareBtn').addEventListener('click', async (e) => {
