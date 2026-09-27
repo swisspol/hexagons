@@ -43,7 +43,6 @@ background.src = 'audi_r8.png';
 const config = Object.fromEntries(PARAMS.map(p => [p.key, p.def]));
 
 const canvas = document.getElementById('canvas');
-const ctx = canvas.getContext('2d');
 const statsEl = document.getElementById('stats');
 const warningEl = document.getElementById('warning');
 
@@ -146,14 +145,21 @@ function buildTiling(p) {
 
 function render() {
     const t = buildTiling(config);
-    const { width, height, line } = config;
+    drawPattern(canvas, t, true);
+    renderStats(t);
+}
 
-    canvas.width = width;
-    canvas.height = height;
+// Draws the pattern onto `target`, optionally with the background image.
+function drawPattern(target, t, withBackground) {
+    const { width, height, line } = config;
+    const ctx = target.getContext('2d');
+
+    target.width = width;
+    target.height = height;
 
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, width, height);
-    drawBackground(width, height);
+    if (withBackground) drawBackground(ctx, width, height);
     ctx.strokeStyle = '#000000';
     ctx.lineWidth = line;
     ctx.lineCap = 'round';
@@ -184,11 +190,9 @@ function render() {
         ctx.arc(c.x, c.y, t.radius, 0, TAU);
     }
     ctx.stroke();
-
-    renderStats(t);
 }
 
-function drawBackground(width, height) {
+function drawBackground(ctx, width, height) {
     if (!background.complete || !background.naturalWidth || config.bgOpacity <= 0) return;
     const scale = Math.min(width / background.naturalWidth, height / background.naturalHeight);
     const w = background.naturalWidth * scale;
@@ -289,22 +293,17 @@ function updateUrl() {
     }
 }
 
-document.getElementById('downloadBtn').addEventListener('click', (e) => {
-    const btn = e.currentTarget;
-    try {
-        canvas.toBlob(blob => {
-            const a = document.createElement('a');
-            a.href = URL.createObjectURL(blob);
-            a.download = `hexagons-${config.width}x${config.height}.png`;
-            a.click();
-            setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-        }, 'image/png');
-    } catch {
-        // Browsers taint the canvas when the background image is loaded from
-        // file://, which blocks export. Serving the folder over http fixes it.
-        btn.textContent = 'Export blocked: serve over http';
-        setTimeout(() => { btn.textContent = 'Download PNG'; }, 3000);
-    }
+// Export from an offscreen canvas so the PNG never includes the background.
+document.getElementById('downloadBtn').addEventListener('click', () => {
+    const out = document.createElement('canvas');
+    drawPattern(out, buildTiling(config), false);
+    out.toBlob(blob => {
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `hexagons-${config.width}x${config.height}.png`;
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    }, 'image/png');
 });
 
 document.getElementById('shareBtn').addEventListener('click', async (e) => {
