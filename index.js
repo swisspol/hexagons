@@ -29,9 +29,11 @@ const PARAMS = [
     { key: 'e1y',    url: 'e1y', label: 'Emitter 1 — Y',    unit: '%',  group: 'emitters', min: 0,   max: 100,  step: 0.5, def: 18 },
     { key: 'e2x',    url: 'e2x', label: 'Emitter 2 — X',    unit: '%',  group: 'emitters', min: 0,   max: 100,  step: 0.5, def: 47 },
     { key: 'e2y',    url: 'e2y', label: 'Emitter 2 — Y',    unit: '%',  group: 'emitters', min: 0,   max: 100,  step: 0.5, def: 61.5 },
-    { key: 'radius', url: 'r',   label: 'Disk radius',      unit: 'px', group: 'emitters', min: 1,   max: 500,  step: 1,   def: 40 },
+    { key: 'radius', url: 'r',   label: 'Emitter size',     unit: 'px', group: 'emitters', min: 1,   max: 500,  step: 1,   def: 40 },
     { key: 'growth', url: 'g',   label: 'Growth per ring',  unit: '%',  group: 'pattern',  min: 2,   max: 60,   step: 0.5, def: 20 },
     { key: 'line',   url: 'lw',  label: 'Line width',       unit: 'px', group: 'pattern',  min: 0.5, max: 10,   step: 0.5, def: 2 },
+    { key: 'overlay', url: 'od', label: 'Size',            unit: 'px', group: 'disks',    min: 0,   max: 500,  step: 1,   def: 40 },
+    { key: 'discBorder', url: 'db', label: 'Draw border',               group: 'disks',    min: 0,   max: 1,    step: 1,   def: 0,    type: 'checkbox' },
     { key: 'bgOpacity', url: 'bg', label: 'Image opacity',  unit: '%',  group: 'background', min: 0, max: 100, step: 1,   def: 30 },
 ];
 
@@ -112,24 +114,44 @@ function buildTiling(p) {
     // Hexagon vertices relative to the cell centre, pointy along Re(w).
     // Each cell draws its upper three edges (0-1, 1-2, 2-3); the other three
     // belong to neighbours, so every edge is drawn exactly once.
-    const V = [[2 * h / 3, 0], [h / 3, s / 2], [-h / 3, s / 2], [-2 * h / 3, 0]];
+    const V = [
+        [2 * h / 3, 0], [h / 3, s / 2], [-h / 3, s / 2],
+        [-2 * h / 3, 0], [-h / 3, -s / 2], [h / 3, -s / 2],
+    ];
+
+    // The lattice is drawn unclipped and continues toward the foci, row by
+    // row, until the cells' edges become shorter than the line width (beyond
+    // that they would merge into a black blob). The innermost rows also draw
+    // the edges that would otherwise belong to the omitted row beyond them.
+    // The overlay discs, if any, are painted on top.
+    const edgeLength = k => {
+        const [x1, y1] = toPlane(k * h + h / 3, s / 2);
+        const [x2, y2] = toPlane(k * h - h / 3, s / 2);
+        return Math.hypot(x2 - x1, y2 - y1);
+    };
+    const minEdge = Math.max(1, p.line);
+    let kMax = K, kMin = -K;
+    while (kMax < 200 && edgeLength(kMax + 1) >= minEdge) kMax++;
+    while (kMin > -200 && edgeLength(kMin - 1) >= minEdge) kMin--;
 
     // Cell centres at (k·h, j·s + offset). w = 0 (the point at infinity) is a
     // cell centre, so no mapped edge ever passes through infinity.
     const segments = [];
-    const rows = K + 2;
-    for (let k = -rows; k <= rows; k++) {
+    for (let k = kMin; k <= kMax; k++) {
         const cr = k * h;
         const offset = (k & 1) ? s / 2 : 0;
+        const edges = [[0, 1], [1, 2], [2, 3]];
+        if (k === kMax) edges.push([5, 0]);
+        if (k === kMin) edges.push([3, 4]);
         for (let j = 0; j < N; j++) {
             const ci = j * s + offset;
             const pts = V.map(([vr, vi]) => toPlane(cr + vr, ci + vi));
-            for (let e = 0; e < 3; e++) segments.push(pts[e], pts[e + 1]);
+            for (const [a, b] of edges) segments.push(pts[a], pts[b]);
         }
     }
 
     return {
-        c1, c2, radius, segments, warning,
+        c1, c2, f1, f2, radius, segments, warning,
         stats: {
             cellsPerRing: N,
             rings: K + 1,
@@ -165,16 +187,6 @@ function drawPattern(target, t, withBackground) {
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
 
-    // Clip the lattice to the canvas minus both disks.
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(0, 0, width, height);
-    for (const c of [t.c1, t.c2]) {
-        ctx.moveTo(c.x + t.radius, c.y);
-        ctx.arc(c.x, c.y, t.radius, 0, TAU);
-    }
-    ctx.clip('evenodd');
-
     ctx.beginPath();
     const seg = t.segments;
     for (let i = 0; i < seg.length; i += 2) {
@@ -182,14 +194,39 @@ function drawPattern(target, t, withBackground) {
         ctx.lineTo(seg[i + 1][0], seg[i + 1][1]);
     }
     ctx.stroke();
-    ctx.restore();
 
+    // Overlay discs: plain white (no outline), sized independently of the
+    // emitters and aligned with the rings of cells, painted on top.
+    const discs = overlayDiscs(t, config.overlay);
+    if (!discs.length) return;
     ctx.beginPath();
-    for (const c of [t.c1, t.c2]) {
-        ctx.moveTo(c.x + t.radius, c.y);
-        ctx.arc(c.x, c.y, t.radius, 0, TAU);
+    for (const d of discs) {
+        ctx.moveTo(d.x + d.r, d.y);
+        ctx.arc(d.x, d.y, d.r, 0, TAU);
     }
-    ctx.stroke();
+    ctx.fill();
+    if (config.discBorder) ctx.stroke();
+}
+
+// The rings of cells around an emitter are circles of the bipolar system
+// (Apollonius circles |z − f1| / |z − f2| = k), which are not concentric:
+// their centres drift toward the focus as they shrink. To line up with the
+// hexagons, each overlay disc is the ring of the requested radius r rather
+// than a circle around the emitter centre. For r = emitter size it is
+// centred exactly on the emitter.
+//
+// For foci 2c apart, that circle has radius 2ck / (1 − k²), so
+// k = (√(c² + r²) − c) / r, and its centre is (f1 − k²·f2) / (1 − k²).
+function overlayDiscs(t, r) {
+    if (r <= 0 || !t.f1) return [];
+    const c = Math.hypot(t.f2.x - t.f1.x, t.f2.y - t.f1.y) / 2;
+    const k = (Math.sqrt(c * c + r * r) - c) / r;
+    const k2 = k * k;
+    return [[t.f1, t.f2], [t.f2, t.f1]].map(([a, b]) => ({
+        x: (a.x - k2 * b.x) / (1 - k2),
+        y: (a.y - k2 * b.y) / (1 - k2),
+        r,
+    }));
 }
 
 function drawBackground(ctx, width, height) {
@@ -241,6 +278,22 @@ function clamp(p, v) {
 function buildControls() {
     for (const p of PARAMS) {
         const field = document.createElement('div');
+
+        // Booleans are stored as 1 / 0 so the URL and clamping code apply.
+        if (p.type === 'checkbox') {
+            field.className = 'field checkbox';
+            field.innerHTML = `<label><input type="checkbox" id="check-${p.key}"> ${p.label}</label>`;
+            document.querySelector(`[data-group="${p.group}"]`).appendChild(field);
+            const box = field.querySelector('input');
+            box.checked = !!config[p.key];
+            box.addEventListener('change', () => {
+                config[p.key] = box.checked ? 1 : 0;
+                updateUrl();
+                scheduleRender();
+            });
+            continue;
+        }
+
         field.className = 'field' + (p.range === false ? ' no-range' : '');
         field.innerHTML = `
             <label for="num-${p.key}">${p.label} <span class="unit">(${p.unit})</span></label>
@@ -305,11 +358,11 @@ function saveBlob(blob, ext) {
 function buildSvg(t) {
     const { width, height, line } = config;
     const f = v => +v.toFixed(2);
-    const circle = c =>
-        `M${f(c.x + t.radius)} ${f(c.y)}` +
-        `A${f(t.radius)} ${f(t.radius)} 0 1 0 ${f(c.x - t.radius)} ${f(c.y)}` +
-        `A${f(t.radius)} ${f(t.radius)} 0 1 0 ${f(c.x + t.radius)} ${f(c.y)}Z`;
-    const disks = circle(t.c1) + circle(t.c2);
+    const discs = overlayDiscs(t, config.overlay);
+    const disks = discs.map(d =>
+        `M${f(d.x + d.r)} ${f(d.y)}` +
+        `A${d.r} ${d.r} 0 1 0 ${f(d.x - d.r)} ${f(d.y)}` +
+        `A${d.r} ${d.r} 0 1 0 ${f(d.x + d.r)} ${f(d.y)}Z`).join('');
 
     // Skip segments that lie entirely on one side outside the canvas.
     const parts = [];
@@ -323,12 +376,11 @@ function buildSvg(t) {
 
     return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
-<defs><clipPath id="outside-disks"><path clip-rule="evenodd" d="M0 0H${width}V${height}H0Z${disks}"/></clipPath></defs>
 <rect width="${width}" height="${height}" fill="#ffffff"/>
 <g fill="none" stroke="#000000" stroke-width="${line}" stroke-linecap="round" stroke-linejoin="round">
-<path clip-path="url(#outside-disks)" d="${parts.join('')}"/>
-<path d="${disks}"/>
+<path d="${parts.join('')}"/>
 </g>
+${disks ? `<path fill="#ffffff"${config.discBorder ? ` stroke="#000000" stroke-width="${line}"` : ''} d="${disks}"/>\n` : ''}
 </svg>
 `;
 }

@@ -73,6 +73,19 @@ body {
     margin-bottom: 4px;
 }
 
+.field.checkbox label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0;
+    cursor: pointer;
+}
+
+.field.checkbox input {
+    margin: 0;
+    accent-color: #111;
+}
+
 .field .unit {
     color: #9ca3af;
     font-weight: 400;
